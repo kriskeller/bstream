@@ -10,10 +10,10 @@ func TestMap(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := StreamFlow[string](ctx,
+	err := Stream[string](ctx,
 		func(errs chan error) error {
 			stream := ArrayToStream[string]([]string{"1", "2", "3", "4"})
-			ints := Map(context.Background(), stream, StringToInteger, errs)
+			ints := ConcurrentMap(ctx, stream, 2, StringToInteger, errs)
 			for v := range ints {
 				println(v)
 			}
@@ -28,7 +28,7 @@ func TestMap(t *testing.T) {
 func TestFilter(t *testing.T) {
 	ctx := context.Background()
 
-	err := StreamFlow[string](ctx,
+	err := Stream[string](ctx,
 		func(errs chan error) error {
 			stream := ArrayToStream[string]([]string{"1", "2", "3", "4"})
 			ints := Map(ctx, stream, StringToInteger, errs)
@@ -45,6 +45,9 @@ func TestFilter(t *testing.T) {
 }
 
 func StringToInteger(str string) (int, error) {
+	// if str == "3" {
+	// 	return 0, errors.New("three not allowed")
+	// }
 	return strconv.Atoi(str)
 }
 

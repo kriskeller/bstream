@@ -2,6 +2,8 @@ package bstream
 
 import (
 	"context"
+	"errors"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -25,6 +27,7 @@ func Map[I any, O any](
 ) chan O {
 
 	out := make(chan O)
+
 	go func() {
 		for {
 			select {
@@ -104,13 +107,19 @@ func ErrorLoop(ctx context.Context, errs chan error) error {
 	return e
 }
 
-func StreamFlow[T any](ctx context.Context, f func(errs chan error) error) error {
+func Stream[T any](ctx context.Context, f func(errs chan error) error) error {
 
 	errs := make(chan error)
 	eg := errgroup.Group{}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	eg.Go(func() error {
-		return ErrorLoop(ctx, errs)
+		err := ErrorLoop(ctx, errs)
+		if err != nil {
+			cancel()
+		}
+		return err
 	})
 	eg.Go(func() error {
 		err := f(errs)
@@ -118,4 +127,85 @@ func StreamFlow[T any](ctx context.Context, f func(errs chan error) error) error
 		return err
 	})
 	return eg.Wait()
+}
+
+func FanOut[T any](ctx context.Context, in chan T, concurrency int, errs chan error) []chan T {
+
+	if concurrency <= 0 {
+		errs <- errors.New("concurrency must be greater than zero")
+		return []chan T{}
+	}
+
+	streams := make([]chan T, concurrency)
+	for index, _ := range streams {
+		streams[index] = make(chan T)
+	}
+	go func() {
+		streamIndex := 0
+		for {
+			select {
+			case v, ok := <-in:
+				if ok {
+					streams[streamIndex] <- v
+					streamIndex++
+					if streamIndex >= concurrency {
+						streamIndex = concurrency - 1
+					}
+				} else {
+					//input stream closed
+					for _, stream := range streams {
+						close(stream)
+					}
+					return
+				}
+			case <-ctx.Done():
+				for _, stream := range streams {
+					close(stream)
+				}
+				return
+			}
+		}
+	}()
+	return streams
+}
+
+func FanIn[T any](ctx context.Context, streams []chan T, errs chan error) chan T {
+	out := make(chan T)
+	go func() {
+		wg := sync.WaitGroup{}
+		for _, stream := range streams {
+			wg.Add(1)
+			go func() {
+				for {
+					select {
+					case v, ok := <-stream:
+						if ok {
+							out <- v
+						} else {
+							wg.Done()
+							return
+						}
+					case <-ctx.Done():
+						wg.Done()
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
+func ConcurrentMap[I, O any](ctx context.Context, in chan I, concurrency int,
+	f func(i I) (O, error), errs chan error,
+) chan O {
+	iStreams := FanOut(ctx, in, 2, errs)
+	oStreams := make([]chan O, len(iStreams))
+	for index, stream := range iStreams {
+		oStreams[index] = Map(ctx, stream, f, errs)
+	}
+	out := FanIn(ctx, oStreams, errs)
+	return out
 }

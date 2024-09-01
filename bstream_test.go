@@ -2,7 +2,9 @@ package bstream
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -30,12 +32,33 @@ func TestFilter(t *testing.T) {
 
 	err := Stream[string](ctx,
 		func(errs chan error) error {
-			stream := ArrayToStream[string]([]string{"1", "2", "3", "4"})
-			ints := Map(ctx, stream, StringToInteger, errs)
-			filteredInts := Filter(ctx, ints, OnlyAllowEvens, errs)
-			for v := range filteredInts {
-				println(v)
-			}
+			stream := ArrayToStream[int]([]int{1, 2, 3, 4})
+			streams := Clone[int](ctx, stream, 2, errs)
+
+			wg := sync.WaitGroup{}
+			wg.Add(2)
+			//deal with stream 1
+			go func() {
+				stream := streams[0]
+				filteredInts := Filter(ctx, stream, OnlyAllowEvens, errs)
+				for v := range filteredInts {
+					fmt.Printf("stream 1: %d\n", v)
+				}
+				wg.Done()
+			}()
+
+			//deal with stream 2
+			go func() {
+				stream := streams[1]
+				ss := Map(ctx, stream, IntegerToString, errs)
+				for v := range ss {
+					fmt.Printf("stream 2: %s\n", v)
+				}
+				wg.Done()
+			}()
+
+			wg.Wait()
+
 			return nil
 		},
 	)
@@ -45,10 +68,11 @@ func TestFilter(t *testing.T) {
 }
 
 func StringToInteger(str string) (int, error) {
-	// if str == "3" {
-	// 	return 0, errors.New("three not allowed")
-	// }
 	return strconv.Atoi(str)
+}
+
+func IntegerToString(i int) (string, error) {
+	return strconv.FormatInt(int64(i), 10), nil
 }
 
 func OnlyAllowEvens(v int) (bool, error) {

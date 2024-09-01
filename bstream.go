@@ -209,3 +209,39 @@ func ConcurrentMap[I, O any](ctx context.Context, in chan I, concurrency int,
 	out := FanIn(ctx, oStreams, errs)
 	return out
 }
+
+func Clone[T any](ctx context.Context, in chan T, count int, errs chan error) []chan T {
+	if count <= 1 {
+		errs <- errors.New("count must be greater than 1")
+		return []chan T{}
+	}
+
+	streams := make([]chan T, count)
+	for index, _ := range streams {
+		streams[index] = make(chan T)
+	}
+	go func() {
+		for {
+			select {
+			case v, ok := <-in:
+				if ok {
+					for _, stream := range streams {
+						stream <- v
+					}
+				} else {
+					//input stream closed
+					for _, stream := range streams {
+						close(stream)
+					}
+					return
+				}
+			case <-ctx.Done():
+				for _, stream := range streams {
+					close(stream)
+				}
+				return
+			}
+		}
+	}()
+	return streams
+}

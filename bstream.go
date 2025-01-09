@@ -172,7 +172,7 @@ func FanOut[T any](ctx context.Context, in chan T, concurrency int, errs chan er
 func FanIn[T any](ctx context.Context, streams []chan T, errs chan error) chan T {
 	out := make(chan T)
 	go func() {
-		wg := sync.WaitGroup{}
+		var wg sync.WaitGroup
 		for _, stream := range streams {
 			wg.Add(1)
 			go func() {
